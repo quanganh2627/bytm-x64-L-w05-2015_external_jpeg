@@ -13,6 +13,9 @@ LOCAL_SRC_FILES := \
 	jfdctint.c jidctflt.c jidctfst.c jidctint.c jidctred.c jquant1.c \
 	jquant2.c jutils.c jmemmgr.c armv6_idct.S
 
+LOCAL_C_INCLUDES := \
+        $(TARGET_OUT_HEADERS)/ipp
+
 # use ashmem as libjpeg decoder's backing store
 LOCAL_CFLAGS += -DUSE_ANDROID_ASHMEM
 LOCAL_SRC_FILES += \
@@ -38,9 +41,18 @@ else
 LOCAL_CFLAGS += -DANDROID_ARMV6_IDCT
 endif
 
+# enable encoding IPP optimization
+LOCAL_CFLAGS += -DIPP_ENCODE
+
 LOCAL_MODULE:= libjpeg
 
 LOCAL_SHARED_LIBRARIES := \
 	libcutils
+
+LOCAL_STATIC_LIBRARIES := \
+        libippj \
+        libippi \
+        libipps \
+        libippcore
 
 include $(BUILD_SHARED_LIBRARY)
