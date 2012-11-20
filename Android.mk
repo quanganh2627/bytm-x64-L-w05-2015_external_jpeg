@@ -91,6 +91,28 @@ LOCAL_STATIC_LIBRARIES := \
         libipps \
         libippcore
 
+# Add source codes for Merrifield
+MERRIFIELD_PRODUCT := \
+        mrfl_vp \
+	mrfl_hvp \
+	mrfl_sle
+ifneq ($(filter $(TARGET_PRODUCT),$(MERRIFIELD_PRODUCT)),)
+LOCAL_SRC_FILES += \
+    jd_libva.c
+
+LOCAL_C_INCLUDES += \
+       $(TARGET_OUT_HEADERS)/libva \
+       $(TARGET_OUT_HEADERS)/libjpeg_hw
+
+LOCAL_SHARED_LIBRARIES += \
+        libjpeg_hw
+
+LOCAL_LDLIBS += -lpthread
+LOCAL_CFLAGS += -Wno-multichar
+LOCAL_MODULE_TAGS := optional
+LOCAL_CFLAGS += -DUSE_INTEL_JPEGDEC
+endif
+
 include $(BUILD_SHARED_LIBRARY)
 
 include $(CLEAR_VARS)
