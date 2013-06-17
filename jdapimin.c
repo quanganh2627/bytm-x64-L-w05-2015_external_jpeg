@@ -282,7 +282,7 @@ jpeg_read_header (j_decompress_ptr cinfo, boolean require_image)
     break;
   }
 #else
-  jpeg_read_header_hw (cinfo, require_image);
+  retcode = jpeg_read_header_hw (cinfo, require_image);
 #endif
   return retcode;
 }
