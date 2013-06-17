@@ -91,12 +91,7 @@ LOCAL_STATIC_LIBRARIES := \
         libipps \
         libippcore
 
-# Add source codes for Merrifield
-MERRIFIELD_PRODUCT := \
-        mrfl_vp \
-	mrfl_hvp \
-	mrfl_sle
-ifneq ($(filter $(TARGET_PRODUCT),$(MERRIFIELD_PRODUCT)),)
+ifeq ($(USE_INTEL_JPEGDEC),true)
 LOCAL_SRC_FILES += \
     jd_libva.c
 
