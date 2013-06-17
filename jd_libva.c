@@ -83,7 +83,7 @@ jpeg_CreateDecompress_hw (j_decompress_ptr cinfo)
 
   if (!(jd_libva_ptr->initialized)) {
     ret = jdva_initialize (jd_libva_ptr);
-    if (!ret) {
+    if (ret) {
       jd_libva_ptr->hw_state_ready = FALSE;
       WARNMS(cinfo, JERR_JVA_INITIALIZE);  //HW JPEG initialize error, we have to go to software path
     } else {
@@ -138,11 +138,11 @@ jpeg_destroy_decompress_libva (j_decompress_ptr cinfo, jd_libva_struct * jd_libv
 {
 //  jdva_release_resource (jd_libva_ptr);
   jdva_deinitialize (jd_libva_ptr);
-  if (!jd_libva_ptr->bitstream_buf) {
+  if (jd_libva_ptr->bitstream_buf) {
     free(jd_libva_ptr->bitstream_buf);
     jd_libva_ptr->bitstream_buf = NULL;
   }
-  if (!jd_libva_ptr->JPEGParser) {
+  if (jd_libva_ptr->JPEGParser) {
     free(jd_libva_ptr->JPEGParser);
     jd_libva_ptr->JPEGParser = NULL;
   }
@@ -236,13 +236,14 @@ jpeg_read_header_hw (j_decompress_ptr cinfo, boolean require_image)
     jd_libva_ptr->hw_path = FALSE;
     jd_libva_ptr->hw_state_ready = FALSE;
   }
+
   return retcode;
 }
 
 GLOBAL(int)
 jpeg_read_header_libva (j_decompress_ptr cinfo, jd_libva_struct * jd_libva_ptr)
 {
-  long file_size = 6500000;
+  long file_size = 1024 * 1024 * 3;
   int ret;
   jd_libva_ptr->bitstream_buf = (uint8_t* )malloc(sizeof(uint8_t) * file_size);
   if (jd_libva_ptr->bitstream_buf == NULL)
@@ -255,17 +256,22 @@ jpeg_read_header_libva (j_decompress_ptr cinfo, jd_libva_struct * jd_libva_ptr)
   (*cinfo->src->init_source)(cinfo);
 
   do {
-    (*cinfo->src->fill_input_buffer)(cinfo);
-    memcpy(jd_libva_ptr->bitstream_buf + jd_libva_ptr->file_size, cinfo->src->next_input_byte, cinfo->src->bytes_in_buffer);
-    jd_libva_ptr->file_size += cinfo->src->bytes_in_buffer;
-  } while (cinfo->src->bytes_in_buffer == 4096);
+    if ((*cinfo->src->fill_input_buffer)(cinfo)) {
+        memcpy(jd_libva_ptr->bitstream_buf + jd_libva_ptr->file_size, cinfo->src->next_input_byte, cinfo->src->bytes_in_buffer);
+        jd_libva_ptr->file_size += cinfo->src->bytes_in_buffer;
+    }
+    else {
+        // fill_input_buffer returns FALSE when no byte is read
+        break;
+    }
+  } while (cinfo->src->bytes_in_buffer > 0);
 
   jd_libva_ptr->JPEGParser = (CJPEGParse*)malloc(sizeof(CJPEGParse));
   if (jd_libva_ptr->JPEGParser == NULL)
     ERREXIT1(cinfo, JERR_OUT_OF_MEMORY, 0);
 
   parserInitialize(jd_libva_ptr->JPEGParser, jd_libva_ptr->bitstream_buf, jd_libva_ptr->file_size);
-  ret = parseBitstream(jd_libva_ptr);
+  ret = parseBitstream(cinfo, jd_libva_ptr);
   return ret;
 }
 
@@ -331,6 +337,8 @@ jpeg_finish_decompress_libva (j_decompress_ptr cinfo, jd_libva_struct * jd_libva
 {
   int ret;
   ret = jdva_release_resource(jd_libva_ptr);
+  free (jd_libva_ptr->output_image);
+  jd_libva_ptr->output_lines = 0;
   if (!ret)
     return TRUE;
   else
@@ -401,8 +409,14 @@ jpeg_start_decompress_libva (j_decompress_ptr cinfo, jd_libva_struct * jd_libva_
   int ret;
 
   ret = jdva_create_resource(jd_libva_ptr);
-  if (!ret)
+  if (!ret) {
+    cinfo->output_width = cinfo->image_width;
+    cinfo->output_height = cinfo->image_height;
+    cinfo->output_scan_number = cinfo->input_scan_number;
+    jd_libva_ptr->output_image = (char**)malloc(cinfo->image_height * sizeof(char*));
+    jd_libva_ptr->output_lines = 0;
     return TRUE;
+  }
   else
     return FALSE;
 }
@@ -459,6 +473,7 @@ GLOBAL(JDIMENSION)
 jpeg_read_scanlines_hw (j_decompress_ptr cinfo, JSAMPARRAY scanlines, JDIMENSION max_lines)
 {
   JDIMENSION row_ctr;
+  JDIMENSION cur_line;
   j_context_list_decoder * context_list_decoder = NULL;
   pthread_mutex_lock(&mutex_decoder);
   context_list_decoder = get_context_list_decoder_by_cinfo (g_context_list_decoder, cinfo);
@@ -472,7 +487,13 @@ jpeg_read_scanlines_hw (j_decompress_ptr cinfo, JSAMPARRAY scanlines, JDIMENSION
     ERREXIT(cinfo, JERR_NULL_JDVA_CONTEXT);
   }
   if (jd_libva_ptr->hw_path) {
-    row_ctr = jpeg_read_scanlines_libva (cinfo, jd_libva_ptr, scanlines);
+    for (cur_line = 0; cur_line < max_lines; ++ cur_line) {
+        jd_libva_ptr->output_image[jd_libva_ptr->output_lines++] = scanlines[cur_line];
+    }
+    if (jd_libva_ptr->output_lines == cinfo->output_height)
+        row_ctr = jpeg_read_scanlines_libva (cinfo, jd_libva_ptr);
+    else
+        row_ctr = max_lines;
   } else {
     row_ctr = jpeg_read_scanlines_native (cinfo, scanlines, max_lines);
   }
@@ -480,10 +501,10 @@ jpeg_read_scanlines_hw (j_decompress_ptr cinfo, JSAMPARRAY scanlines, JDIMENSION
 }
 
 GLOBAL(JDIMENSION)
-jpeg_read_scanlines_libva (j_decompress_ptr cinfo, jd_libva_struct * jd_libva_ptr, JSAMPARRAY scanlines)
+jpeg_read_scanlines_libva (j_decompress_ptr cinfo, jd_libva_struct * jd_libva_ptr)
 {
   int ret;
-  ret = jdva_decode (jd_libva_ptr, scanlines);
+  ret = jdva_decode (cinfo, jd_libva_ptr);
   if (ret)
     ERREXIT1(cinfo, JERR_JVA_DECODE, cinfo);
 
