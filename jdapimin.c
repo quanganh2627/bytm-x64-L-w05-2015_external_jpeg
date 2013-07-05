@@ -20,10 +20,6 @@
 #include "jinclude.h"
 #include "jpeglib.h"
 
-#ifdef USE_INTEL_JPEGDEC
-#include "jd_libva.h"
-#include "JPEGDecoder.h"
-#endif
 
 /*
  * Initialization of a JPEG decompression object.
@@ -34,9 +30,7 @@ GLOBAL(void)
 jpeg_CreateDecompress (j_decompress_ptr cinfo, int version, size_t structsize)
 {
   int i;
-#ifdef USE_INTEL_JPEGDEC
-  jpeg_CreateDecompress_hw (cinfo);
-#endif
+
   /* Guard against version mismatches between library and caller. */
   cinfo->mem = NULL;		/* so jpeg_destroy knows mem mgr not called */
   if (version != JPEG_LIB_VERSION)
@@ -97,11 +91,7 @@ jpeg_CreateDecompress (j_decompress_ptr cinfo, int version, size_t structsize)
 GLOBAL(void)
 jpeg_destroy_decompress (j_decompress_ptr cinfo)
 {
-#ifndef USE_INTEL_JPEGDEC
   jpeg_destroy((j_common_ptr) cinfo); /* use common routine */
-#else
-  jpeg_destroy_decompress_hw (cinfo);
-#endif
 }
 
 
@@ -113,11 +103,7 @@ jpeg_destroy_decompress (j_decompress_ptr cinfo)
 GLOBAL(void)
 jpeg_abort_decompress (j_decompress_ptr cinfo)
 {
-#ifndef USE_INTEL_JPEGDEC
   jpeg_abort((j_common_ptr) cinfo); /* use common routine */
-#else
-  jpeg_abort_decompress_hw(cinfo);
-#endif
 }
 
 
@@ -256,7 +242,7 @@ GLOBAL(int)
 jpeg_read_header (j_decompress_ptr cinfo, boolean require_image)
 {
   int retcode;
-#ifndef USE_INTEL_JPEGDEC
+
   if (cinfo->global_state != DSTATE_START &&
       cinfo->global_state != DSTATE_INHEADER)
     ERREXIT1(cinfo, JERR_BAD_STATE, cinfo->global_state);
@@ -281,9 +267,7 @@ jpeg_read_header (j_decompress_ptr cinfo, boolean require_image)
     /* no work */
     break;
   }
-#else
-  jpeg_read_header_hw (cinfo, require_image);
-#endif
+
   return retcode;
 }
 
@@ -385,7 +369,6 @@ jpeg_has_multiple_scans (j_decompress_ptr cinfo)
 GLOBAL(boolean)
 jpeg_finish_decompress (j_decompress_ptr cinfo)
 {
-#ifndef USE_INTEL_JPEGDEC
   if ((cinfo->global_state == DSTATE_SCANNING ||
        cinfo->global_state == DSTATE_RAW_OK) && ! cinfo->buffered_image) {
     /* Terminate final pass of non-buffered mode */
@@ -415,7 +398,4 @@ jpeg_finish_decompress (j_decompress_ptr cinfo)
   /* We can use jpeg_abort to release memory and reset global_state */
   jpeg_abort((j_common_ptr) cinfo);
   return TRUE;
-#else
-  return jpeg_finish_decompress_hw (cinfo);
-#endif
 }
