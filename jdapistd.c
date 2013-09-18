@@ -20,7 +20,7 @@
 
 #ifdef USE_INTEL_JPEGDEC
 #include "jd_libva.h"
-#include "JPEGDecoder.h"
+#include "JPEGDecoder_libjpeg_wrapper.h"
 METHODDEF(void) error_exit_libva_ext (j_common_ptr cinfo);
 #endif
 
