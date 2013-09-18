@@ -25,10 +25,6 @@
 #include "jversion.h"   /* for version message */
 
 #include "jd_libva.h"
-#include "JPEGDecoder.h"
-#include <va/va.h>
-//#include <va/va_android.h>
-#include "va/va_dec_jpeg.h"
 
 j_context_list_decoder *g_context_list_decoder = NULL;
 pthread_mutex_t mutex_decoder = PTHREAD_MUTEX_INITIALIZER;
@@ -141,10 +137,6 @@ jpeg_destroy_decompress_libva (j_decompress_ptr cinfo, jd_libva_struct * jd_libv
   if (jd_libva_ptr->bitstream_buf) {
     free(jd_libva_ptr->bitstream_buf);
     jd_libva_ptr->bitstream_buf = NULL;
-  }
-  if (jd_libva_ptr->JPEGParser) {
-    free(jd_libva_ptr->JPEGParser);
-    jd_libva_ptr->JPEGParser = NULL;
   }
 //  jpeg_abort((j_common_ptr) cinfo);
   jpeg_destroy((j_common_ptr) cinfo); /* use common routine */
@@ -266,12 +258,7 @@ jpeg_read_header_libva (j_decompress_ptr cinfo, jd_libva_struct * jd_libva_ptr)
     }
   } while (cinfo->src->bytes_in_buffer > 0);
 
-  jd_libva_ptr->JPEGParser = (CJPEGParse*)malloc(sizeof(CJPEGParse));
-  if (jd_libva_ptr->JPEGParser == NULL)
-    ERREXIT1(cinfo, JERR_OUT_OF_MEMORY, 0);
-
-  parserInitialize(jd_libva_ptr->JPEGParser, jd_libva_ptr->bitstream_buf, jd_libva_ptr->file_size);
-  ret = parseBitstream(cinfo, jd_libva_ptr);
+  ret = jdva_parse_bitstream(cinfo, jd_libva_ptr);
   return ret;
 }
 
