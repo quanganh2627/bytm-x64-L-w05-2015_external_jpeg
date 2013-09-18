@@ -22,7 +22,7 @@
 
 #ifdef USE_INTEL_JPEGDEC
 #include "jd_libva.h"
-#include "JPEGDecoder.h"
+#include "JPEGDecoder_libjpeg_wrapper.h"
 #endif
 
 /*

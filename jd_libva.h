@@ -17,7 +17,7 @@
 #ifndef JDAPI_BACKEND_H
 #define JDAPI_BACKEND_H
 
-#include "JPEGDecoder.h"
+#include "JPEGDecoder_libjpeg_wrapper.h"
 
 typedef struct j_context_list_decoder_t {
   j_decompress_ptr cinfo;
