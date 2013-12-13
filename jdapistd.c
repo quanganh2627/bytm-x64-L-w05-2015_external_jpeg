@@ -18,11 +18,6 @@
 #include "jinclude.h"
 #include "jpeglib.h"
 
-#ifdef USE_INTEL_JPEGDEC
-#include "jd_libva.h"
-#include "JPEGDecoder_libjpeg_wrapper.h"
-METHODDEF(void) error_exit_libva_ext (j_common_ptr cinfo);
-#endif
 
 /* Forward declarations */
 LOCAL(boolean) output_pass_setup JPP((j_decompress_ptr cinfo));
@@ -42,7 +37,6 @@ LOCAL(boolean) output_pass_setup JPP((j_decompress_ptr cinfo));
 GLOBAL(boolean)
 jpeg_start_decompress (j_decompress_ptr cinfo)
 {
-#ifndef USE_INTEL_JPEGDEC
   if (cinfo->global_state == DSTATE_READY) {
     /* First call: initialize master control, select active modules */
     jinit_master_decompress(cinfo);
@@ -86,9 +80,6 @@ jpeg_start_decompress (j_decompress_ptr cinfo)
     ERREXIT1(cinfo, JERR_BAD_STATE, cinfo->global_state);
   /* Perform any dummy output passes, and set up for the final pass */
   return output_pass_setup(cinfo);
-#else
-  return jpeg_start_decompress_hw (cinfo);
-#endif
 }
 
 /*
@@ -187,7 +178,6 @@ GLOBAL(JDIMENSION)
 jpeg_read_scanlines (j_decompress_ptr cinfo, JSAMPARRAY scanlines,
 		     JDIMENSION max_lines)
 {
-#ifndef USE_INTEL_JPEGDEC
   JDIMENSION row_ctr;
 
   if (cinfo->global_state != DSTATE_SCANNING)
@@ -209,9 +199,6 @@ jpeg_read_scanlines (j_decompress_ptr cinfo, JSAMPARRAY scanlines,
   (*cinfo->main->process_data) (cinfo, scanlines, &row_ctr, max_lines);
   cinfo->output_scanline += row_ctr;
   return row_ctr;
-#else
-  return jpeg_read_scanlines_hw (cinfo, scanlines, max_lines);
-#endif
 }
 /*
  * Initialize the jpeg decoder to decompressing a rectangle with size of (width, height)
