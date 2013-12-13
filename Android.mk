@@ -13,8 +13,12 @@ LOCAL_SRC_FILES := \
     jfdctint.c jidctflt.c jidctfst.c jidctint.c jidctred.c jquant1.c \
     jquant2.c jutils.c jmemmgr.c armv6_idct.S
 
+LOCAL_C_INCLUDES := \
+        $(TARGET_OUT_HEADERS)/ipp
+
 ifeq (,$(TARGET_BUILD_APPS))
 # building against master
+
 # use ashmem as libjpeg decoder's backing store
 LOCAL_CFLAGS += -DUSE_ANDROID_ASHMEM
 LOCAL_SRC_FILES += \
@@ -35,7 +39,7 @@ LOCAL_CFLAGS += -O3 -fstrict-aliasing -fprefetch-loop-arrays
 # enable tile based decode
 LOCAL_CFLAGS += -DANDROID_TILE_BASED_DECODE
 
-ifeq ($(TARGET_ARCH_VARIANT),x86-atom)
+ifeq ($(TARGET_ARCH),x86)
   LOCAL_CFLAGS += -DANDROID_INTELSSE2_IDCT
   LOCAL_SRC_FILES += jidctintelsse.c
 endif
@@ -63,6 +67,9 @@ ifeq ($(strip $(TARGET_ARCH)),mips)
   endif
 endif
 
+# enable encoding IPP optimization
+LOCAL_CFLAGS += -DIPP_ENCODE
+
 LOCAL_MODULE := libjpeg_static
 
 include $(BUILD_STATIC_LIBRARY)
@@ -84,6 +91,29 @@ LOCAL_SHARED_LIBRARIES := \
 else
 # unbundled branch, built against NDK.
 LOCAL_SDK_VERSION := 17
+endif
+
+LOCAL_STATIC_LIBRARIES := \
+        libippj \
+        libippi \
+        libipps \
+        libippcore
+
+ifeq ($(USE_INTEL_JPEGDEC),true)
+LOCAL_SRC_FILES += \
+    jd_libva.c
+
+LOCAL_C_INCLUDES += \
+       $(TARGET_OUT_HEADERS)/libva \
+       $(TARGET_OUT_HEADERS)/libjpeg_hw
+
+LOCAL_SHARED_LIBRARIES += \
+        libjpeg_hw
+
+LOCAL_LDLIBS += -lpthread
+LOCAL_CFLAGS += -Wno-multichar
+LOCAL_MODULE_TAGS := optional
+LOCAL_CFLAGS += -DUSE_INTEL_JPEGDEC
 endif
 
 include $(BUILD_SHARED_LIBRARY)
