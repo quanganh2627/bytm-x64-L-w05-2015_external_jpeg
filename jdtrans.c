@@ -207,11 +207,15 @@ jpeg_build_huffman_index_baseline(j_decompress_ptr cinfo, huffman_index *index)
 GLOBAL(boolean)
 jpeg_build_huffman_index(j_decompress_ptr cinfo, huffman_index *index)
 {
+#ifndef USE_INTEL_JPEGDEC
     cinfo->tile_decode = TRUE;
     if (cinfo->progressive_mode)
       return jpeg_build_huffman_index_progressive(cinfo, index);
     else
       return jpeg_build_huffman_index_baseline(cinfo, index);
+#else
+    return jpeg_build_huffman_index_hw(cinfo, index);
+#endif
 }
 
 /*

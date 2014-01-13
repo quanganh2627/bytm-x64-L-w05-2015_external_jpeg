@@ -70,6 +70,14 @@ endif
 # enable encoding IPP optimization
 LOCAL_CFLAGS += -DIPP_ENCODE
 
+ifeq ($(USE_INTEL_JPEGDEC),true)
+LOCAL_C_INCLUDES += \
+       $(TARGET_OUT_HEADERS)/libva \
+       $(TARGET_OUT_HEADERS)/libjpeg_hw
+LOCAL_SHARED_LIBRARIES += \
+        libjpeg_hw liblog libutils
+LOCAL_CFLAGS += -DUSE_INTEL_JPEGDEC
+endif
 LOCAL_MODULE := libjpeg_static
 
 include $(BUILD_STATIC_LIBRARY)
@@ -108,7 +116,7 @@ LOCAL_C_INCLUDES += \
        $(TARGET_OUT_HEADERS)/libjpeg_hw
 
 LOCAL_SHARED_LIBRARIES += \
-        libjpeg_hw
+        libjpeg_hw liblog libutils
 
 LOCAL_LDLIBS += -lpthread
 LOCAL_CFLAGS += -Wno-multichar

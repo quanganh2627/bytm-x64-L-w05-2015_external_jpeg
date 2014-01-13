@@ -827,6 +827,7 @@ jinit_huff_decoder (j_decompress_ptr cinfo)
 GLOBAL(void)
 jpeg_create_huffman_index(j_decompress_ptr cinfo, huffman_index *index)
 {
+#ifndef USE_INTEL_JPEGDEC
   int i, s;
   index->scan_count = 1;
   index->total_iMCU_rows = cinfo->total_iMCU_rows;
@@ -839,11 +840,15 @@ jpeg_create_huffman_index(j_decompress_ptr cinfo, huffman_index *index)
 
   index->mem_used = sizeof(huffman_scan_header)
       + cinfo->total_iMCU_rows * sizeof(huffman_offset_data*);
+#else
+  jpeg_create_huffman_index_hw(cinfo, index);
+#endif
 }
 
 GLOBAL(void)
 jpeg_destroy_huffman_index(huffman_index *index)
 {
+#ifndef USE_INTEL_JPEGDEC
     int i, j;
     for (i = 0; i < index->scan_count; i++) {
         for(j = 0; j < index->total_iMCU_rows; j++) {
@@ -852,6 +857,9 @@ jpeg_destroy_huffman_index(huffman_index *index)
         free(index->scan[i].offset);
     }
     free(index->scan);
+#else
+    jpeg_destroy_huffman_index_hw(index);
+#endif
 }
 
 /*
