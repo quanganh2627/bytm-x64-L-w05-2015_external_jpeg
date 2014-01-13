@@ -99,6 +99,7 @@ jpeg_start_decompress (j_decompress_ptr cinfo)
 GLOBAL(boolean)
 jpeg_start_tile_decompress (j_decompress_ptr cinfo)
 {
+#ifndef USE_INTEL_JPEGDEC
   if (cinfo->global_state == DSTATE_READY) {
     /* First call: initialize master control, select active modules */
     cinfo->tile_decode = TRUE;
@@ -115,6 +116,10 @@ jpeg_start_tile_decompress (j_decompress_ptr cinfo)
     ERREXIT1(cinfo, JERR_BAD_STATE, cinfo->global_state);
   /* Perform any dummy output passes, and set up for the final pass */
   return output_pass_setup(cinfo);
+#else
+  return jpeg_start_tile_decompress_hw (cinfo);
+#endif
+
 }
 
 
@@ -225,6 +230,7 @@ GLOBAL(void)
 jpeg_init_read_tile_scanline(j_decompress_ptr cinfo, huffman_index *index,
 		     int *start_x, int *start_y, int *width, int *height)
 {
+#ifndef USE_INTEL_JPEGDEC
   // Calculates the boundary of iMCU
   int lines_per_iMCU_row = cinfo->max_v_samp_factor * DCTSIZE;
   int lines_per_iMCU_col = cinfo->max_h_samp_factor * DCTSIZE;
@@ -273,6 +279,9 @@ jpeg_init_read_tile_scanline(j_decompress_ptr cinfo, huffman_index *index,
       col_left_boundary / index->MCU_sample_size;
   cinfo->coef->column_right_boundary =
       jdiv_round_up(col_right_boundary, index->MCU_sample_size);
+#else
+  jpeg_init_read_tile_scanline_hw(cinfo, start_x, start_y, width, height);
+#endif
 }
 
 /*
@@ -285,6 +294,7 @@ GLOBAL(JDIMENSION)
 jpeg_read_tile_scanline (j_decompress_ptr cinfo, huffman_index *index,
         JSAMPARRAY scanlines)
 {
+#ifndef USE_INTEL_JPEGDEC
   // Calculates the boundary of iMCU
   int lines_per_iMCU_row = cinfo->max_v_samp_factor * DCTSIZE;
   int lines_per_iMCU_col = cinfo->max_h_samp_factor * DCTSIZE;
@@ -309,6 +319,10 @@ jpeg_read_tile_scanline (j_decompress_ptr cinfo, huffman_index *index,
 
   cinfo->output_scanline += row_ctr;
   return row_ctr;
+#else
+  return jpeg_read_tile_scanline_hw (cinfo, scanlines);
+#endif
+
 }
 
 /*
