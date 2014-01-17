@@ -52,9 +52,19 @@ GLOBAL(boolean) jpeg_start_decompress_hw (j_decompress_ptr cinfo);
 GLOBAL(boolean) jpeg_start_decompress_libva (j_decompress_ptr cinfo, jd_libva_struct * jd_libva_ptr);
 GLOBAL(boolean) jpeg_start_decompress_native (j_decompress_ptr cinfo);
 
+GLOBAL(boolean) jpeg_start_tile_decompress_hw (j_decompress_ptr cinfo);
+
 GLOBAL(JDIMENSION) jpeg_read_scanlines_hw (j_decompress_ptr cinfo, JSAMPARRAY scanlines, JDIMENSION max_lines);
-GLOBAL(JDIMENSION) jpeg_read_scanlines_libva (j_decompress_ptr cinfo, jd_libva_struct * jd_libva_ptr);
+GLOBAL(JDIMENSION) jpeg_read_scanlines_libva (j_decompress_ptr cinfo, jd_libva_struct * jd_libva_ptr, JSAMPARRAY scanlines, JDIMENSION max_lines);
 GLOBAL(JDIMENSION) jpeg_read_scanlines_native (j_decompress_ptr cinfo, JSAMPARRAY scanlines, JDIMENSION max_lines);
+
+GLOBAL(void) jpeg_create_huffman_index_hw(j_decompress_ptr cinfo, huffman_index *index);
+GLOBAL(boolean) jpeg_build_huffman_index_hw(j_decompress_ptr cinfo, huffman_index *index);
+GLOBAL(void) jpeg_destroy_huffman_index_hw(huffman_index *index);
+
+GLOBAL(void) jpeg_init_read_tile_scanline_hw (j_decompress_ptr cinfo, int *start_x, int *start_y, int *width, int *height);
+
+GLOBAL(JDIMENSION) jpeg_read_tile_scanline_hw (j_decompress_ptr cinfo, JSAMPARRAY scanlines);
 
 j_context_list_decoder * append_context_list_decoder (j_context_list_decoder * head, j_context_list_decoder * list);
 j_context_list_decoder * remove_context_list_decoder (j_context_list_decoder * head, j_context_list_decoder * list);

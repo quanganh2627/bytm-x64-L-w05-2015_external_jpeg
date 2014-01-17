@@ -220,6 +220,7 @@ jpeg_read_header_hw (j_decompress_ptr cinfo, boolean require_image)
     retcode = JPEG_HEADER_OK;
     cinfo->out_color_space = JCS_RGB;
     jd_libva_ptr->hw_path = TRUE;
+    cinfo->global_state = DSTATE_READY;
   } else {
     if (jd_libva_ptr->hw_state_ready) {
       jdva_deinitialize (jd_libva_ptr);
@@ -235,31 +236,13 @@ jpeg_read_header_hw (j_decompress_ptr cinfo, boolean require_image)
 GLOBAL(int)
 jpeg_read_header_libva (j_decompress_ptr cinfo, jd_libva_struct * jd_libva_ptr)
 {
-  long file_size = 1024 * 1024 * 3;
   int ret;
-  jd_libva_ptr->bitstream_buf = (uint8_t* )malloc(sizeof(uint8_t) * file_size);
-  if (jd_libva_ptr->bitstream_buf == NULL)
-    ERREXIT1(cinfo, JERR_OUT_OF_MEMORY, 0);
-
-  memset(jd_libva_ptr->bitstream_buf, 0, file_size);
   jd_libva_ptr->file_size = 0;
 
   (*cinfo->inputctl->reset_input_controller)(cinfo);
   (*cinfo->src->init_source)(cinfo);
 
-  do {
-    if ((*cinfo->src->fill_input_buffer)(cinfo)) {
-        memcpy(jd_libva_ptr->bitstream_buf + jd_libva_ptr->file_size, cinfo->src->next_input_byte, cinfo->src->bytes_in_buffer);
-        jd_libva_ptr->file_size += cinfo->src->bytes_in_buffer;
-    }
-    else {
-        // fill_input_buffer returns FALSE when no byte is read
-        break;
-    }
-  } while (cinfo->src->bytes_in_buffer > 0);
-
-  ret = jdva_parse_bitstream(cinfo, jd_libva_ptr);
-  return ret;
+  return jdva_parse_bitstream(cinfo, jd_libva_ptr);
 }
 
 GLOBAL(int)
@@ -324,8 +307,6 @@ jpeg_finish_decompress_libva (j_decompress_ptr cinfo, jd_libva_struct * jd_libva
 {
   int ret;
   ret = jdva_release_resource(jd_libva_ptr);
-  free (jd_libva_ptr->output_image);
-  jd_libva_ptr->output_lines = 0;
   if (!ret)
     return TRUE;
   else
@@ -400,8 +381,12 @@ jpeg_start_decompress_libva (j_decompress_ptr cinfo, jd_libva_struct * jd_libva_
     cinfo->output_width = cinfo->image_width;
     cinfo->output_height = cinfo->image_height;
     cinfo->output_scan_number = cinfo->input_scan_number;
-    jd_libva_ptr->output_image = (char**)malloc(cinfo->image_height * sizeof(char*));
-    jd_libva_ptr->output_lines = 0;
+    int ret;
+    ret = jdva_decode (cinfo, jd_libva_ptr);
+    if (ret) {
+      ERREXIT1(cinfo, JERR_JVA_DECODE, cinfo);
+    }
+    cinfo->global_state = DSTATE_SCANNING;
     return TRUE;
   }
   else
@@ -456,6 +441,27 @@ jpeg_start_decompress_native (j_decompress_ptr cinfo)
   return output_pass_setup(cinfo);
 }
 
+GLOBAL(boolean)
+jpeg_start_tile_decompress_hw (j_decompress_ptr cinfo)
+{
+  j_context_list_decoder * context_list_decoder = NULL;
+  pthread_mutex_lock(&mutex_decoder);
+  context_list_decoder = get_context_list_decoder_by_cinfo (g_context_list_decoder, cinfo);
+  pthread_mutex_unlock(&mutex_decoder);
+  if (!context_list_decoder) {
+    ERREXIT1(cinfo, JERR_CINFO_NOT_FOUND, cinfo);
+  }
+
+  jd_libva_struct * jd_libva_ptr = context_list_decoder->jd_libva_ptr;
+  if (!(jd_libva_ptr)) {
+    ERREXIT(cinfo, JERR_NULL_JDVA_CONTEXT);
+  }
+  if (jd_libva_ptr->hw_state_ready && jd_libva_ptr->hw_path)
+    return jpeg_start_decompress_libva(cinfo, jd_libva_ptr);
+  else
+    return jpeg_start_decompress_native(cinfo);
+}
+
 GLOBAL(JDIMENSION)
 jpeg_read_scanlines_hw (j_decompress_ptr cinfo, JSAMPARRAY scanlines, JDIMENSION max_lines)
 {
@@ -474,13 +480,7 @@ jpeg_read_scanlines_hw (j_decompress_ptr cinfo, JSAMPARRAY scanlines, JDIMENSION
     ERREXIT(cinfo, JERR_NULL_JDVA_CONTEXT);
   }
   if (jd_libva_ptr->hw_path) {
-    for (cur_line = 0; cur_line < max_lines; ++ cur_line) {
-        jd_libva_ptr->output_image[jd_libva_ptr->output_lines++] = scanlines[cur_line];
-    }
-    if (jd_libva_ptr->output_lines == cinfo->output_height)
-        row_ctr = jpeg_read_scanlines_libva (cinfo, jd_libva_ptr);
-    else
-        row_ctr = max_lines;
+    row_ctr = jpeg_read_scanlines_libva (cinfo, jd_libva_ptr, scanlines, max_lines);
   } else {
     row_ctr = jpeg_read_scanlines_native (cinfo, scanlines, max_lines);
   }
@@ -488,15 +488,17 @@ jpeg_read_scanlines_hw (j_decompress_ptr cinfo, JSAMPARRAY scanlines, JDIMENSION
 }
 
 GLOBAL(JDIMENSION)
-jpeg_read_scanlines_libva (j_decompress_ptr cinfo, jd_libva_struct * jd_libva_ptr)
+jpeg_read_scanlines_libva (j_decompress_ptr cinfo, jd_libva_struct * jd_libva_ptr, JSAMPARRAY scanlines, JDIMENSION max_lines)
 {
   int ret;
-  ret = jdva_decode (cinfo, jd_libva_ptr);
-  if (ret)
+  JDIMENSION row_ctr;
+  row_ctr = 0;
+  ret = jdva_read_scanlines(cinfo, jd_libva_ptr, scanlines, &row_ctr, max_lines);
+  if (ret) {
     ERREXIT1(cinfo, JERR_JVA_DECODE, cinfo);
-
-  cinfo->output_scanline = cinfo->output_height;
-  return cinfo->output_scanline;
+  }
+  cinfo->output_scanline += row_ctr;
+  return row_ctr;
 }
 
 GLOBAL(JDIMENSION)
@@ -527,6 +529,98 @@ jpeg_read_scanlines_native (j_decompress_ptr cinfo, JSAMPARRAY scanlines, JDIMEN
   (*cinfo->main->process_data) (cinfo, scanlines, &row_ctr, max_lines);
   cinfo->output_scanline += row_ctr;
   return row_ctr;
+}
+
+GLOBAL(void)
+jpeg_create_huffman_index_hw(j_decompress_ptr cinfo, huffman_index *index)
+{
+  j_context_list_decoder * context_list_decoder = NULL;
+  pthread_mutex_lock(&mutex_decoder);
+  context_list_decoder = get_context_list_decoder_by_cinfo (g_context_list_decoder, cinfo);
+  pthread_mutex_unlock(&mutex_decoder);
+  if (!context_list_decoder) {
+    ERREXIT1(cinfo, JERR_CINFO_NOT_FOUND, cinfo);
+  }
+  jd_libva_struct * jd_libva_ptr = context_list_decoder->jd_libva_ptr;
+  if (!(jd_libva_ptr)) {
+    ERREXIT(cinfo, JERR_NULL_JDVA_CONTEXT);
+  }
+  if (jd_libva_ptr->hw_state_ready && jd_libva_ptr->hw_path) {
+    cinfo->scale_num = 1;
+  }
+  else
+    ERREXIT1(cinfo, JERR_JVA_DECODE, cinfo);
+}
+GLOBAL(boolean)
+jpeg_build_huffman_index_hw(j_decompress_ptr cinfo, huffman_index *index)
+{
+  j_context_list_decoder * context_list_decoder = NULL;
+  pthread_mutex_lock(&mutex_decoder);
+  context_list_decoder = get_context_list_decoder_by_cinfo (g_context_list_decoder, cinfo);
+  pthread_mutex_unlock(&mutex_decoder);
+  if (!context_list_decoder) {
+    ERREXIT1(cinfo, JERR_CINFO_NOT_FOUND, cinfo);
+  }
+  jd_libva_struct * jd_libva_ptr = context_list_decoder->jd_libva_ptr;
+  if (!(jd_libva_ptr)) {
+    ERREXIT(cinfo, JERR_NULL_JDVA_CONTEXT);
+  }
+  if (jd_libva_ptr->hw_state_ready && jd_libva_ptr->hw_path)
+    return TRUE;
+  else
+    ERREXIT1(cinfo, JERR_JVA_DECODE, cinfo);
+  return FALSE;
+}
+GLOBAL(void)
+jpeg_destroy_huffman_index_hw(huffman_index *index)
+{
+  /* Do Nothing */
+}
+
+GLOBAL(void)
+jpeg_init_read_tile_scanline_hw (j_decompress_ptr cinfo, int *start_x, int *start_y, int *width, int *height)
+{
+  j_context_list_decoder * context_list_decoder = NULL;
+  pthread_mutex_lock(&mutex_decoder);
+  context_list_decoder = get_context_list_decoder_by_cinfo (g_context_list_decoder, cinfo);
+  pthread_mutex_unlock(&mutex_decoder);
+  if (!context_list_decoder) {
+    ERREXIT1(cinfo, JERR_CINFO_NOT_FOUND, cinfo);
+  }
+  cinfo->output_scanline = *start_y;
+  jd_libva_struct * jd_libva_ptr = context_list_decoder->jd_libva_ptr;
+  if (!(jd_libva_ptr)) {
+    ERREXIT(cinfo, JERR_NULL_JDVA_CONTEXT);
+  }
+  if (jd_libva_ptr->hw_state_ready && jd_libva_ptr->hw_path)
+    return jdva_init_read_tile_scanline(cinfo, jd_libva_ptr, start_x, start_y, width, height);
+  else
+    ERREXIT1(cinfo, JERR_JVA_DECODE, cinfo);
+}
+
+GLOBAL(JDIMENSION)
+jpeg_read_tile_scanline_hw (j_decompress_ptr cinfo, JSAMPARRAY scanlines)
+{
+  j_context_list_decoder * context_list_decoder = NULL;
+  pthread_mutex_lock(&mutex_decoder);
+  context_list_decoder = get_context_list_decoder_by_cinfo (g_context_list_decoder, cinfo);
+  pthread_mutex_unlock(&mutex_decoder);
+  if (!context_list_decoder) {
+    ERREXIT1(cinfo, JERR_CINFO_NOT_FOUND, cinfo);
+  }
+  jd_libva_struct * jd_libva_ptr = context_list_decoder->jd_libva_ptr;
+  if (!(jd_libva_ptr)) {
+    ERREXIT(cinfo, JERR_NULL_JDVA_CONTEXT);
+  }
+  if (jd_libva_ptr->hw_state_ready && jd_libva_ptr->hw_path) {
+    JDIMENSION row_ctr;
+    jdva_read_tile_scanline(cinfo, jd_libva_ptr, scanlines, &row_ctr);
+    cinfo->output_scanline += row_ctr;
+    return row_ctr;
+  }
+  else
+    ERREXIT1(cinfo, JERR_JVA_DECODE, cinfo);
+  return 0;
 }
 
 /*
