@@ -13,8 +13,10 @@ LOCAL_SRC_FILES := \
     jfdctint.c jidctflt.c jidctfst.c jidctint.c jidctred.c jquant1.c \
     jquant2.c jutils.c jmemmgr.c armv6_idct.S
 
+ifeq ($(strip $(USE_INTEL_IPP)),true)
 LOCAL_C_INCLUDES := \
         $(TARGET_OUT_HEADERS)/ipp
+endif
 
 ifeq (,$(TARGET_BUILD_APPS))
 # building against master
@@ -67,8 +69,10 @@ ifeq ($(strip $(TARGET_ARCH)),mips)
   endif
 endif
 
+ifeq ($(strip $(USE_INTEL_IPP)),true)
 # enable encoding IPP optimization
 LOCAL_CFLAGS += -DIPP_ENCODE
+endif
 
 ifeq ($(USE_INTEL_JPEGDEC),true)
 LOCAL_C_INCLUDES += \
@@ -101,11 +105,13 @@ else
 LOCAL_SDK_VERSION := 17
 endif
 
+ifeq ($(strip $(USE_INTEL_IPP)),true)
 LOCAL_STATIC_LIBRARIES := \
         libippj \
         libippi \
         libipps \
         libippcore
+endif
 
 ifeq ($(USE_INTEL_JPEGDEC),true)
 LOCAL_SRC_FILES += \
