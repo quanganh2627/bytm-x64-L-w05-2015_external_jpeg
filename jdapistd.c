@@ -271,6 +271,7 @@ jpeg_init_read_tile_scanline(j_decompress_ptr cinfo, huffman_index *index,
   cinfo->inputctl->consume_input_build_huffman_index =
       cinfo->coef->consume_data_build_huffman_index;
   cinfo->entropy->index = index;
+  cinfo->entropy->insufficient_data = FALSE;
   cinfo->input_iMCU_row = row_offset;
   cinfo->output_iMCU_row = row_offset;
   cinfo->coef->MCU_column_left_boundary = col_left_boundary;
