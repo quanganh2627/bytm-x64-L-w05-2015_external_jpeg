@@ -225,12 +225,10 @@ jpeg_read_scanlines (j_decompress_ptr cinfo, JSAMPARRAY scanlines,
  * Also, the new reader position and sampled image size will be returned in
  * (start_x, start_y) and (width, height), respectively.
  */
-
 GLOBAL(void)
-jpeg_init_read_tile_scanline(j_decompress_ptr cinfo, huffman_index *index,
+jpeg_init_read_tile_scanline_native(j_decompress_ptr cinfo, huffman_index *index,
 		     int *start_x, int *start_y, int *width, int *height)
 {
-#ifndef USE_INTEL_JPEGDEC
   // Calculates the boundary of iMCU
   int lines_per_iMCU_row = cinfo->max_v_samp_factor * DCTSIZE;
   int lines_per_iMCU_col = cinfo->max_h_samp_factor * DCTSIZE;
@@ -280,11 +278,17 @@ jpeg_init_read_tile_scanline(j_decompress_ptr cinfo, huffman_index *index,
       col_left_boundary / index->MCU_sample_size;
   cinfo->coef->column_right_boundary =
       jdiv_round_up(col_right_boundary, index->MCU_sample_size);
+}
+GLOBAL(void)
+jpeg_init_read_tile_scanline(j_decompress_ptr cinfo, huffman_index *index,
+		     int *start_x, int *start_y, int *width, int *height)
+{
+#ifdef USE_INTEL_JPEGDEC
+    jpeg_init_read_tile_scanline_hw(cinfo, index, start_x, start_y, width, height);
 #else
-  jpeg_init_read_tile_scanline_hw(cinfo, start_x, start_y, width, height);
+    jpeg_init_read_tile_scanline_native(cinfo, index, start_x, start_y, width, height);
 #endif
 }
-
 /*
  * Read a scanline from the current position.
  *
@@ -292,10 +296,9 @@ jpeg_init_read_tile_scanline(j_decompress_ptr cinfo, huffman_index *index,
  */
 
 GLOBAL(JDIMENSION)
-jpeg_read_tile_scanline (j_decompress_ptr cinfo, huffman_index *index,
+jpeg_read_tile_scanline_native (j_decompress_ptr cinfo, huffman_index *index,
         JSAMPARRAY scanlines)
 {
-#ifndef USE_INTEL_JPEGDEC
   // Calculates the boundary of iMCU
   int lines_per_iMCU_row = cinfo->max_v_samp_factor * DCTSIZE;
   int lines_per_iMCU_col = cinfo->max_h_samp_factor * DCTSIZE;
@@ -320,12 +323,17 @@ jpeg_read_tile_scanline (j_decompress_ptr cinfo, huffman_index *index,
 
   cinfo->output_scanline += row_ctr;
   return row_ctr;
-#else
-  return jpeg_read_tile_scanline_hw (cinfo, scanlines);
-#endif
-
 }
-
+GLOBAL(JDIMENSION)
+jpeg_read_tile_scanline (j_decompress_ptr cinfo, huffman_index *index,
+        JSAMPARRAY scanlines)
+{
+#ifndef USE_INTEL_JPEGDEC
+  return jpeg_read_tile_scanline_native(cinfo, index, scanlines);
+#else
+  return jpeg_read_tile_scanline_hw (cinfo, index, scanlines);
+#endif
+}
 /*
  * Alternate entry point to read raw data.
  * Processes exactly one iMCU row per call, unless suspended.
