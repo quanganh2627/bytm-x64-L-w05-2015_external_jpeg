@@ -18,6 +18,9 @@
 #include "jinclude.h"
 #include "jpeglib.h"
 #include "jdhuff.h"		/* Declarations shared with jdphuff.c */
+#ifdef USE_INTEL_JPEGDEC
+#include "jd_libva.h"
+#endif
 
 LOCAL(boolean) process_restart (j_decompress_ptr cinfo);
 

@@ -23,7 +23,6 @@
 #include "jpeglib.h"
 #include <pthread.h>
 #include "jversion.h"   /* for version message */
-
 #include "jd_libva.h"
 
 j_context_list_decoder *g_context_list_decoder = NULL;
@@ -38,6 +37,13 @@ const char * const jpeg_libva_ext_message_table_decoder[] = {
   NULL
 };
 #endif
+extern boolean
+jpeg_build_huffman_index_native(j_decompress_ptr cinfo, huffman_index *index);
+extern void
+jpeg_init_read_tile_scanline_native(j_decompress_ptr cinfo, huffman_index *index,
+                                    int *start_x, int *start_y, int *width, int *height);
+extern JDIMENSION
+jpeg_read_tile_scanline_native (j_decompress_ptr cinfo, huffman_index *index, JSAMPARRAY scanlines);
 
 LOCAL(boolean) output_pass_setup JPP((j_decompress_ptr cinfo));
 
@@ -52,8 +58,9 @@ jpeg_CreateDecompress_hw (j_decompress_ptr cinfo)
   jd_libva_struct * jd_libva_ptr = malloc (sizeof (jd_libva_struct));
   if (jd_libva_ptr == NULL)
     ERREXIT1(cinfo, JERR_OUT_OF_MEMORY, 0);
-
+  huffman_index *huff_index = jd_libva_ptr->huff_index;
   MEMZERO (jd_libva_ptr, sizeof (jd_libva_struct));
+  jd_libva_ptr->huff_index = huff_index;
 
   /*
    * Please note that we won't check jd_libva_ptr anymore after that to follow the
@@ -132,13 +139,8 @@ jpeg_destroy_decompress_hw (j_decompress_ptr cinfo)
 GLOBAL(void)
 jpeg_destroy_decompress_libva (j_decompress_ptr cinfo, jd_libva_struct * jd_libva_ptr)
 {
-//  jdva_release_resource (jd_libva_ptr);
   jdva_deinitialize (jd_libva_ptr);
-  if (jd_libva_ptr->bitstream_buf) {
-    free(jd_libva_ptr->bitstream_buf);
-    jd_libva_ptr->bitstream_buf = NULL;
-  }
-//  jpeg_abort((j_common_ptr) cinfo);
+  jd_libva_ptr->hw_state_ready = FALSE;
   jpeg_destroy((j_common_ptr) cinfo); /* use common routine */
 }
 
@@ -186,8 +188,6 @@ jpeg_abort_decompress_hw (j_decompress_ptr cinfo)
 GLOBAL(void)
 jpeg_abort_decompress_libva (j_decompress_ptr cinfo, jd_libva_struct * jd_libva_ptr)
 {
-  // jva_release_resource (cinfo, jd_libva_ptr);
-  // jva_deinitialize (cinfo, jd_libva_ptr);
   jpeg_abort((j_common_ptr) cinfo); /* use common routine */
 }
 
@@ -215,19 +215,24 @@ jpeg_read_header_hw (j_decompress_ptr cinfo, boolean require_image)
     ERREXIT(cinfo, JERR_NULL_JDVA_CONTEXT);
   }
 
+  jd_libva_ptr->require_image = require_image;
   ret = jpeg_read_header_libva(cinfo, jd_libva_ptr);
   if (jd_libva_ptr->hw_state_ready && (!ret)) {
     retcode = JPEG_HEADER_OK;
-    cinfo->out_color_space = JCS_RGB;
     jd_libva_ptr->hw_path = TRUE;
     cinfo->global_state = DSTATE_READY;
   } else {
+    // roll back state
+    cinfo->global_state = DSTATE_START;
+    // roll back fill buffer
+    jdva_return_filled_bytes(cinfo, jd_libva_ptr);
+    retcode = jpeg_read_header_native (cinfo, require_image);
+    // house-cleaning
     if (jd_libva_ptr->hw_state_ready) {
       jdva_deinitialize (jd_libva_ptr);
+      jd_libva_ptr->hw_state_ready = FALSE;
     }
-    retcode = jpeg_read_header_native (cinfo, require_image);
     jd_libva_ptr->hw_path = FALSE;
-    jd_libva_ptr->hw_state_ready = FALSE;
   }
 
   return retcode;
@@ -281,7 +286,7 @@ jpeg_read_header_native (j_decompress_ptr cinfo, boolean require_image)
 GLOBAL(boolean)
 jpeg_finish_decompress_hw (j_decompress_ptr cinfo)
 {
-   boolean ret;
+  boolean ret;
   j_context_list_decoder * context_list_decoder = NULL;
   pthread_mutex_lock(&mutex_decoder);
   context_list_decoder = get_context_list_decoder_by_cinfo (g_context_list_decoder, cinfo);
@@ -322,8 +327,9 @@ jpeg_finish_decompress_native (j_decompress_ptr cinfo)
 #ifdef ANDROID_TILE_BASED_DECODE
     cinfo->output_scanline = cinfo->output_height;
 #endif
-    if (cinfo->output_scanline < cinfo->output_height)
+    if (cinfo->output_scanline < cinfo->output_height) {
       ERREXIT(cinfo, JERR_TOO_LITTLE_DATA);
+    }
     (*cinfo->master->finish_output_pass) (cinfo);
     cinfo->global_state = DSTATE_STOPPING;
   } else if (cinfo->global_state == DSTATE_BUFIMAGE) {
@@ -335,12 +341,14 @@ jpeg_finish_decompress_native (j_decompress_ptr cinfo)
   }
   /* Read until EOI */
 #ifndef ANDROID_TILE_BASED_DECODE
+
   while (! cinfo->inputctl->eoi_reached) {
     if ((*cinfo->inputctl->consume_input) (cinfo) == JPEG_SUSPENDED)
       return FALSE;  /* Suspend, come back later */
   }
 #endif
   /* Do final cleanup */
+
   (*cinfo->src->term_source) (cinfo);
   /* We can use jpeg_abort to release memory and reset global_state */
   jpeg_abort((j_common_ptr) cinfo);
@@ -365,6 +373,19 @@ jpeg_start_decompress_hw (j_decompress_ptr cinfo)
   }
   if (jd_libva_ptr->hw_state_ready && jd_libva_ptr->hw_path) {
     ret = jpeg_start_decompress_libva (cinfo, jd_libva_ptr);
+    if (ret == FALSE) {
+      // roll back to SW
+      cinfo->global_state = DSTATE_START;
+      jdva_return_filled_bytes(cinfo, jd_libva_ptr);
+      jd_libva_ptr->hw_path = FALSE;
+      ret = jpeg_read_header_native (cinfo, jd_libva_ptr->require_image);
+      jpeg_start_decompress_native (cinfo);
+      if (jd_libva_ptr->hw_state_ready) {
+        jdva_deinitialize (jd_libva_ptr);
+        jd_libva_ptr->hw_state_ready = FALSE;
+      }
+      return ret;
+    }
   } else {
     ret = jpeg_start_decompress_native (cinfo);
   }
@@ -374,17 +395,16 @@ jpeg_start_decompress_hw (j_decompress_ptr cinfo)
 GLOBAL(boolean)
 jpeg_start_decompress_libva (j_decompress_ptr cinfo, jd_libva_struct * jd_libva_ptr)
 {
-  int ret;
+  Decode_Status ret;
 
   ret = jdva_create_resource(jd_libva_ptr);
-  if (!ret) {
+  if (ret == DECODE_SUCCESS) {
     cinfo->output_width = cinfo->image_width;
     cinfo->output_height = cinfo->image_height;
     cinfo->output_scan_number = cinfo->input_scan_number;
-    int ret;
     ret = jdva_decode (cinfo, jd_libva_ptr);
-    if (ret) {
-      ERREXIT1(cinfo, JERR_JVA_DECODE, cinfo);
+    if (ret != DECODE_SUCCESS) {
+        return FALSE;
     }
     cinfo->global_state = DSTATE_SCANNING;
     return TRUE;
@@ -456,11 +476,78 @@ jpeg_start_tile_decompress_hw (j_decompress_ptr cinfo)
   if (!(jd_libva_ptr)) {
     ERREXIT(cinfo, JERR_NULL_JDVA_CONTEXT);
   }
-  if (jd_libva_ptr->hw_state_ready && jd_libva_ptr->hw_path)
-    return jpeg_start_decompress_libva(cinfo, jd_libva_ptr);
+  if (jd_libva_ptr->hw_state_ready && jd_libva_ptr->hw_path) {
+    boolean ret;
+    ret = jpeg_start_tile_decompress_libva(cinfo, jd_libva_ptr);
+    if (ret == FALSE) {
+        // roll back to SW
+        cinfo->global_state = DSTATE_START;
+        jdva_return_filled_bytes(cinfo, jd_libva_ptr);
+        jd_libva_ptr->hw_path = FALSE;
+        ret = jpeg_read_header_native (cinfo, jd_libva_ptr->require_image);
+        if (jd_libva_ptr->huff_index == NULL) {
+            ERREXIT(cinfo, JERR_BAD_STATE);
+        }
+        jpeg_create_huffman_index_native(cinfo, jd_libva_ptr->huff_index);
+        ret = jpeg_build_huffman_index_native(cinfo, jd_libva_ptr->huff_index);
+        if (ret == FALSE) {
+            ERREXIT(cinfo, JERR_BAD_STATE);
+        }
+        ret = jpeg_start_tile_decompress_native (cinfo);
+        if (jd_libva_ptr->hw_state_ready) {
+          jdva_deinitialize (jd_libva_ptr);
+          jd_libva_ptr->hw_state_ready = FALSE;
+        }
+        return ret;
+    }
+    return TRUE;
+  }
   else
-    return jpeg_start_decompress_native(cinfo);
+    return jpeg_start_tile_decompress_native(cinfo);
 }
+
+GLOBAL(boolean)
+jpeg_start_tile_decompress_libva (j_decompress_ptr cinfo, jd_libva_struct * jd_libva_ptr)
+{
+  Decode_Status ret;
+  ret = jdva_create_resource(jd_libva_ptr);
+  if (ret == DECODE_SUCCESS) {
+    cinfo->output_width = cinfo->image_width;
+    cinfo->output_height = cinfo->image_height;
+    cinfo->tile_decode = TRUE;
+    cinfo->output_scan_number = cinfo->input_scan_number;
+    ret = jdva_decode (cinfo, jd_libva_ptr);
+    if (ret != DECODE_SUCCESS) {
+        return FALSE;
+    }
+    cinfo->global_state = DSTATE_SCANNING;
+    return TRUE;
+  }
+  else
+    return FALSE;
+}
+
+GLOBAL(boolean)
+jpeg_start_tile_decompress_native (j_decompress_ptr cinfo)
+{
+  if (cinfo->global_state == DSTATE_READY) {
+    /* First call: initialize master control, select active modules */
+    cinfo->tile_decode = TRUE;
+    jinit_master_decompress(cinfo);
+    if (cinfo->buffered_image) {
+      cinfo->global_state = DSTATE_BUFIMAGE;
+      return TRUE;
+    }
+    cinfo->global_state = DSTATE_PRELOAD;
+  }
+  if (cinfo->global_state == DSTATE_PRELOAD) {
+    cinfo->output_scan_number = cinfo->input_scan_number;
+  } else if (cinfo->global_state != DSTATE_PRESCAN)
+    ERREXIT1(cinfo, JERR_BAD_STATE, cinfo->global_state);
+  /* Perform any dummy output passes, and set up for the final pass */
+  return output_pass_setup(cinfo);
+}
+
 
 GLOBAL(JDIMENSION)
 jpeg_read_scanlines_hw (j_decompress_ptr cinfo, JSAMPARRAY scanlines, JDIMENSION max_lines)
@@ -493,7 +580,7 @@ jpeg_read_scanlines_libva (j_decompress_ptr cinfo, jd_libva_struct * jd_libva_pt
   int ret;
   JDIMENSION row_ctr;
   row_ctr = 0;
-  ret = jdva_read_scanlines(cinfo, jd_libva_ptr, scanlines, &row_ctr, max_lines);
+  ret = jdva_read_scanlines(cinfo, jd_libva_ptr, (char**)scanlines, &row_ctr, max_lines);
   if (ret) {
     ERREXIT1(cinfo, JERR_JVA_DECODE, cinfo);
   }
@@ -538,19 +625,41 @@ jpeg_create_huffman_index_hw(j_decompress_ptr cinfo, huffman_index *index)
   pthread_mutex_lock(&mutex_decoder);
   context_list_decoder = get_context_list_decoder_by_cinfo (g_context_list_decoder, cinfo);
   pthread_mutex_unlock(&mutex_decoder);
+  cinfo->tile_decode = TRUE;
   if (!context_list_decoder) {
     ERREXIT1(cinfo, JERR_CINFO_NOT_FOUND, cinfo);
   }
   jd_libva_struct * jd_libva_ptr = context_list_decoder->jd_libva_ptr;
+  // save the pointer in case of rolling back to SW
+  jd_libva_ptr->huff_index = index;
   if (!(jd_libva_ptr)) {
     ERREXIT(cinfo, JERR_NULL_JDVA_CONTEXT);
   }
   if (jd_libva_ptr->hw_state_ready && jd_libva_ptr->hw_path) {
     cinfo->scale_num = 1;
+    index->scan = NULL;
   }
-  else
-    ERREXIT1(cinfo, JERR_JVA_DECODE, cinfo);
+  else {
+    jpeg_create_huffman_index_native(cinfo, index);
+  }
 }
+
+GLOBAL(void)
+jpeg_create_huffman_index_native(j_decompress_ptr cinfo, huffman_index *index)
+{
+    int i, s;
+    index->scan_count = 1;
+    index->total_iMCU_rows = cinfo->total_iMCU_rows;
+    index->scan = (huffman_scan_header*)malloc(index->scan_count
+            * sizeof(huffman_scan_header));
+    index->scan[0].offset = (huffman_offset_data**)malloc(cinfo->total_iMCU_rows
+            * sizeof(huffman_offset_data*));
+    index->scan[0].prev_MCU_offset.bitstream_offset = 0;
+    index->MCU_sample_size = DEFAULT_MCU_SAMPLE_SIZE;
+    index->mem_used = sizeof(huffman_scan_header)
+        + cinfo->total_iMCU_rows * sizeof(huffman_offset_data*);
+}
+
 GLOBAL(boolean)
 jpeg_build_huffman_index_hw(j_decompress_ptr cinfo, huffman_index *index)
 {
@@ -558,27 +667,48 @@ jpeg_build_huffman_index_hw(j_decompress_ptr cinfo, huffman_index *index)
   pthread_mutex_lock(&mutex_decoder);
   context_list_decoder = get_context_list_decoder_by_cinfo (g_context_list_decoder, cinfo);
   pthread_mutex_unlock(&mutex_decoder);
+  cinfo->tile_decode = TRUE;
   if (!context_list_decoder) {
     ERREXIT1(cinfo, JERR_CINFO_NOT_FOUND, cinfo);
   }
   jd_libva_struct * jd_libva_ptr = context_list_decoder->jd_libva_ptr;
+  // save the pointer in case of rolling back to SW
+  jd_libva_ptr->huff_index = index;
   if (!(jd_libva_ptr)) {
     ERREXIT(cinfo, JERR_NULL_JDVA_CONTEXT);
   }
   if (jd_libva_ptr->hw_state_ready && jd_libva_ptr->hw_path)
     return TRUE;
-  else
-    ERREXIT1(cinfo, JERR_JVA_DECODE, cinfo);
+  else {
+    return jpeg_build_huffman_index_native(cinfo, index);
+  }
   return FALSE;
-}
-GLOBAL(void)
-jpeg_destroy_huffman_index_hw(huffman_index *index)
-{
-  /* Do Nothing */
 }
 
 GLOBAL(void)
-jpeg_init_read_tile_scanline_hw (j_decompress_ptr cinfo, int *start_x, int *start_y, int *width, int *height)
+jpeg_destroy_huffman_index_hw(huffman_index *index)
+{
+    if (index && index->scan) {
+        return jpeg_destroy_huffman_index_native(index);
+    }
+}
+
+GLOBAL(void)
+jpeg_destroy_huffman_index_native(huffman_index *index)
+{
+    int i, j;
+    for (i = 0; i < index->scan_count; i++) {
+        for(j = 0; j < index->total_iMCU_rows; j++) {
+            free(index->scan[i].offset[j]);
+        }
+        free(index->scan[i].offset);
+    }
+    free(index->scan);
+
+}
+
+GLOBAL(void)
+jpeg_init_read_tile_scanline_hw (j_decompress_ptr cinfo, huffman_index *index, int *start_x, int *start_y, int *width, int *height)
 {
   j_context_list_decoder * context_list_decoder = NULL;
   pthread_mutex_lock(&mutex_decoder);
@@ -592,14 +722,18 @@ jpeg_init_read_tile_scanline_hw (j_decompress_ptr cinfo, int *start_x, int *star
   if (!(jd_libva_ptr)) {
     ERREXIT(cinfo, JERR_NULL_JDVA_CONTEXT);
   }
-  if (jd_libva_ptr->hw_state_ready && jd_libva_ptr->hw_path)
-    return jdva_init_read_tile_scanline(cinfo, jd_libva_ptr, start_x, start_y, width, height);
+  if (jd_libva_ptr->hw_state_ready && jd_libva_ptr->hw_path) {
+    Decode_Status st = jdva_init_read_tile_scanline(cinfo, jd_libva_ptr, start_x, start_y, width, height);
+    if (st != DECODE_SUCCESS) {
+        ERREXIT(cinfo, JERR_BAD_STATE);
+    }
+  }
   else
-    ERREXIT1(cinfo, JERR_JVA_DECODE, cinfo);
+    jpeg_init_read_tile_scanline_native(cinfo, index, start_x, start_y, width, height);
 }
 
 GLOBAL(JDIMENSION)
-jpeg_read_tile_scanline_hw (j_decompress_ptr cinfo, JSAMPARRAY scanlines)
+jpeg_read_tile_scanline_hw (j_decompress_ptr cinfo, huffman_index *index, JSAMPARRAY scanlines)
 {
   j_context_list_decoder * context_list_decoder = NULL;
   pthread_mutex_lock(&mutex_decoder);
@@ -614,12 +748,12 @@ jpeg_read_tile_scanline_hw (j_decompress_ptr cinfo, JSAMPARRAY scanlines)
   }
   if (jd_libva_ptr->hw_state_ready && jd_libva_ptr->hw_path) {
     JDIMENSION row_ctr;
-    jdva_read_tile_scanline(cinfo, jd_libva_ptr, scanlines, &row_ctr);
+    jdva_read_tile_scanline(cinfo, jd_libva_ptr, (char**)scanlines, &row_ctr);
     cinfo->output_scanline += row_ctr;
     return row_ctr;
   }
   else
-    ERREXIT1(cinfo, JERR_JVA_DECODE, cinfo);
+    return jpeg_read_tile_scanline_native (cinfo, index, scanlines);
   return 0;
 }
 

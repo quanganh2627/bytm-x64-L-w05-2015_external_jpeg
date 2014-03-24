@@ -78,8 +78,6 @@ ifeq ($(USE_INTEL_JPEGDEC),true)
 LOCAL_C_INCLUDES += \
        $(TARGET_OUT_HEADERS)/libva \
        $(TARGET_OUT_HEADERS)/libjpeg_hw
-LOCAL_SHARED_LIBRARIES += \
-        libjpeg_hw liblog libutils
 LOCAL_CFLAGS += -DUSE_INTEL_JPEGDEC
 endif
 LOCAL_MODULE := libjpeg_static
@@ -121,20 +119,25 @@ endif
 ifeq ($(USE_INTEL_JPEGDEC),true)
 LOCAL_SRC_FILES += \
     jd_libva.c
-
 LOCAL_C_INCLUDES += \
        $(TARGET_OUT_HEADERS)/libva \
        $(TARGET_OUT_HEADERS)/libjpeg_hw
-
 LOCAL_SHARED_LIBRARIES += \
-        libjpeg_hw liblog libutils
-
+    libcutils \
+    libutils \
+    liblog  \
+    libva \
+    libva-android \
+    libmix_imagedecoder \
+    libhardware
+LOCAL_STATIC_LIBRARIES += libjpeg_hw
 LOCAL_LDLIBS += -lpthread
-LOCAL_CFLAGS += -Wno-multichar
+LOCAL_CFLAGS += -Wno-multichar -DLOG_TAG=\"libjpeg\"
 LOCAL_MODULE_TAGS := optional
 LOCAL_CFLAGS += -DUSE_INTEL_JPEGDEC
 endif
 
+LOCAL_CFLAGS += -DANDROID_TILE_BASED_DECODE
 include $(BUILD_SHARED_LIBRARY)
 
 include $(CLEAR_VARS)
